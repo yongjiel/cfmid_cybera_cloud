@@ -8,27 +8,50 @@
 import os
 import sys
 import config
-from util import get_input_file, split_input_file
+from util import get_args, split_input_file
 import re
 import subprocess
 from multiprocessing import Pool
 import time
 
-def jobs(file):
+def jobs(argvs):
+    file = argvs[0]
+    der_arg = argvs[1]
     done_file = file + ".done"
     done_list = []
     if os.path.isfile(done_file):
         with open(done_file, 'r') as df:
             done_list = df.read().split("\n")
+    #done_list = set(done_list)
+    if not der_arg:
+       case_dir = config.case_dir
+       dir_back_to_host = config.dir_back_to_host
+       out_dir = config.out_dir       
+    else:
+       case_dir = config.case_dir_d
+       dir_back_to_host = config.dir_back_to_host_d
+       out_dir = config.out_dir_d
+
     with open(file, "r") as f:
         for line in f:
-            m = re.search("^(\S*)\t(\S*)", line)
-            hmdb_id = m.group(1)
+            if not der_arg:
+                m = re.search("^(\S*)\t(\S*)", line)
+                hmdb_id = m.group(1)
+                smile = m.group(2)
+            else:
+                m = re.search("^(\S*)\t(\S+)\t(\S+)\t(\S+)", line)
+                hmdb_id = m.group(1)
+                smile = m.group(4)
+                deri = m.group(2)
+                cnt = m.group(3)
             if hmdb_id in done_list:
                 continue
-            smile = m.group(2)
-            for c in config.case_dir:
-                remote_file = "{0}/{1}/{2}*".format(config.dir_back_to_host, c, hmdb_id)
+            for c in case_dir:
+                if not der_arg:
+                    remote_file = "{0}/{1}/{2}*".format(dir_back_to_host, c, hmdb_id)
+                else:
+                    remote_file = "{0}/{1}/{2}_{3}_{4}*".format(dir_back_to_host, c, \
+                                                        hmdb_id, deri, cnt)
                 cm1 = "ssh centos_1 \"ls {0}\"".format(remote_file)
                 count = 0
                 read_out = ''
@@ -56,12 +79,17 @@ def jobs(file):
                 elif c == 'ei':
                     param_file = "/root/ei_param_output.log"
                     config_file = "/root/ei_param_config.txt"
-                cmd = ("docker run -v {0}:/root " + ""
+ 
+                if not der_arg:
+                    out_file = "{0}.log".format(hmdb_id)  
+                else:
+                    out_file = "{0}_{1}_{2}.log".format(hmdb_id, deri, cnt)              
+                cmd = ("docker run --rm=true -v {0}:/root " + ""
                      "-i cfmid:latest sh -c \"cd /root/; cfm-predict " +
                      "'{1}' 0.001 {2} {3} " +
-                     "1 /root/{4}/{5}; chmod 777 /root/{4}/{5}\" ").format(config.out_dir, smile, \
+                     "1 /root/{4}/{5}; chmod 777 /root/{4}/{5}\" ").format(out_dir, smile, \
                                             param_file, config_file, c, \
-                                            "{0}.out".format(hmdb_id))
+                                            out_file)
                 x = config.timeout * 60 
                 delay = 3
                 timeout = int(x / delay)
@@ -73,11 +101,19 @@ def jobs(file):
                 #p.wait()
                 if timeout == 0:
                     p.kill()
-                output_file = "{0}/{1}/{2}".format(config.out_dir, c, "{0}.out".format(hmdb_id))
+                    # the above just kill 'docker run', the below will kill the exec in docker container.
+                    cmd = "ps aux|grep '.:.. cfm-'|grep {0}|tr -s ' '|cut -d ' ' -f 2|xargs sudo kill -9 ".format(hmdb_id)
+                    p1 = subprocess.Popen(cmd, stdout=subprocess.PIPE, \
+                            stderr=subprocess.STDOUT, shell=True)  
+                    p1.wait()
+                output_file = "{0}/{1}/{2}".format(out_dir, c, out_file)
                 file_to_master_host = ''
                 # if failed, generate fail file
                 if not os.path.isfile(output_file) or os.stat(output_file).st_size == 0:
-                    fail_file = "{0}/{1}/{2}".format(config.out_dir, c, "{0}.fail".format(hmdb_id))
+                    if not der_arg:
+                        fail_file = "{0}/{1}/{2}".format(out_dir, c, "{0}.fail".format(hmdb_id))
+                    else:
+                        fail_file = "{0}/{1}/{2}".format(out_dir, c, "{0}_{1}_{2}.fail".format(hmdb_id, deri, cnt))
                     with open(fail_file, "w") as ff:
                         ff.write(cmd + "\n")
                         if timeout == 0:
@@ -88,21 +124,25 @@ def jobs(file):
                 else:
                     file_to_master_host = output_file
                 # transfer back to master host
-                cm = "scp {0} centos_1:{1}/{2}/.".format(file_to_master_host, config.dir_back_to_host, c)
-                p = subprocess.Popen(cm, stdout=subprocess.PIPE, \
+                cm = "scp {0} centos_1:{1}/{2}/.".format(file_to_master_host, dir_back_to_host, c)
+                cn =0
+                while(cn <3):
+                    p = subprocess.Popen(cm, stdout=subprocess.PIPE, \
                         stderr=subprocess.STDOUT, shell=True)
-                p.wait()
+                    p.wait()
+                    cn += 1
                 # delete the result file
                 os.remove(file_to_master_host)
             #write done file
-            with open(done_file, "a") as df:
-                df.write(hmdb_id + "\n")
+            if not hmdb_id in done_list:
+                with open(done_file, "a") as df:
+                    df.write(hmdb_id + "\n")
 
-def run_jobs(input_file, pieces):
+def run_jobs(input_file, pieces, der_arg):
     argvs = []
     for i in range(1, pieces+1):
         file = "{0}_{1}".format(input_file, i)
-        argvs.append(file)
+        argvs.append((file, der_arg))
     p = Pool(pieces)
     print argvs
     p.map(jobs, argvs)
@@ -110,10 +150,11 @@ def run_jobs(input_file, pieces):
     p.join()
 
 def main():
-    input_file = get_input_file("run_job_each_host.py")
+    der_arg, input_file = get_args("run_job_each_host.py")
+    print "python ../bin/run_job_each_host.py {0} {1}".format(input_file, der_arg)
     pieces = split_input_file(input_file, config.pieces_in_each_host)
     print "Pieces {0}".format(pieces)
-    run_jobs(input_file, pieces)
+    run_jobs(input_file, pieces, der_arg)
     print "Program exit!"
 
 if __name__ == "__main__":

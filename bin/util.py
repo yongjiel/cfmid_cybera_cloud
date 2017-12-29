@@ -2,15 +2,19 @@
 import sys
 import os
 
-def get_input_file(program):
-    if len(sys.argv) == 1:
-        print "Usage: python {0} <input_file>".format(program)
+def get_args(program):
+    if not len(sys.argv) in [2,3]:
+        print "Usage: python {0} <input_file> [-d]".format(program)
         sys.exit(1)
     input_file = sys.argv[1]
+    if len(sys.argv) == 3:
+        der_arg = sys.argv[2]
+    else:
+       der_arg = '' 
     if not os.path.isfile(input_file):
         print "Error: Input file not exist"
         sys.exit(1)
-    return input_file
+    return der_arg, input_file
 
 def split_input_file(input_file, default_pieces):
     line_count = count(input_file);
@@ -34,6 +38,10 @@ def get_pieces(line_count, default_pieces):
 
 def split_into_pieces(input_file, pieces):
     count = 0;
+    for i in range(1, pieces+1):
+        o_file = "{0}_{1}".format(input_file, i)
+        if os.path.isfile(o_file):
+            os.remove(o_file)
     with open(input_file, "r") as f:
         for line in f:
             count += 1
