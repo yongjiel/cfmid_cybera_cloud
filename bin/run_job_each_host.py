@@ -93,11 +93,15 @@ def jobs(argvs):
                 x = config.timeout * 60 
                 delay = 3
                 timeout = int(x / delay)
+                output_file = "{0}/{1}/{2}".format(out_dir, c, out_file)
                 p = subprocess.Popen(cmd, stdout=subprocess.PIPE, \
                         stderr=subprocess.STDOUT, shell=True)
                 while p.poll() is None and timeout > 0:
                     time.sleep(delay)
-                    timeout -= delay
+                    if os.path.isfile(output_file):
+                        timeout = 0
+                    else:
+                        timeout -= delay
                 #p.wait()
                 if timeout == 0:
                     p.kill()
@@ -106,7 +110,7 @@ def jobs(argvs):
                     p1 = subprocess.Popen(cmd, stdout=subprocess.PIPE, \
                             stderr=subprocess.STDOUT, shell=True)  
                     p1.wait()
-                output_file = "{0}/{1}/{2}".format(out_dir, c, out_file)
+                
                 file_to_master_host = ''
                 # if failed, generate fail file
                 if not os.path.isfile(output_file) or os.stat(output_file).st_size == 0:
